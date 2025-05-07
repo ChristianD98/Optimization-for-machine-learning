@@ -22,6 +22,7 @@ import argparse
 import time
 import scipy
 import matplotlib.pyplot as plt
+import pandas as pd
 
 def exponent_decay_lr_generator(decay_rate, minimum_lr, batch_to_decay):
     cur_lr = None
@@ -206,18 +207,14 @@ def graph_from_history(history, plot_train=False, plot_test=True, output_path=No
             axs.errorbar(x, y, error, marker='^', label="test")
         else:
             plt.plot(x, y, label="test")
-
-    if output_path:
-        plt.savefig(output_path)
-    else:
-        plt.show()
-        
-        
     
     axs.set_xlabel("batch number")
     axs.set_ylabel("accuracy")
     plt.legend()
 #    axs.legend(loc="best")
+
+    if output_path:
+        plt.savefig(output_path)
 
 def run_expriment(args):
     dataset = load_dataset(args.dataset)
@@ -290,16 +287,29 @@ def run_expriment(args):
     
     
     combined_history = combine_histories(histories)
-    
-    if output_path:
-        with open(output_path + "_history", 'wb') as file_pi:
-            pickle.dump(combined_history, file_pi)
         
     print("training acc:", combined_history['acc'][-1])
     print("test acc:", combined_history['val_acc'][-1])
     
     plot_path = output_path + "_plot.png" if output_path else None
     graph_from_history(combined_history, plot_train=False, plot_test=True, output_path=plot_path)
+
+    if output_path:
+        df_val = pd.DataFrame({
+            "batch_num": combined_history["batch_num"],
+            "val_acc": combined_history["val_acc"],
+            "val_loss": combined_history["val_loss"],
+            "std_val_acc": combined_history.get("std_val_acc", [None] * len(combined_history["val_acc"]))
+        })
+
+        df_train = pd.DataFrame({
+            "train_batch": list(range(len(combined_history["acc"]))),
+            "acc": combined_history["acc"],
+            "loss": combined_history["loss"],
+            "std_acc": combined_history.get("std_acc", [None] * len(combined_history["acc"]))
+        })
+        df_val.to_csv(output_path + "_val_history.csv", index=False)
+        df_train.to_csv(output_path + "_train_history.csv", index=False)
     
 
 if __name__ == "__main__":
