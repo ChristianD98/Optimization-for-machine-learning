@@ -65,6 +65,21 @@ def exponent_data_function_generator(dataset, order, batches_to_increase,
 
     return data_function
 
+
+def curriculum_custom_data_function_generator(dataset, order, batch_size=100):
+    """
+    Retourne une data_function qui fournit tout le dataset trié (facile -> difficile).
+    Le batch_generator sera chargé de tirer les batchs ensuite.
+    """
+    x_sorted = dataset.x_train[order]
+    y_sorted = dataset.y_train_labels[order]
+
+    def data_function(x, y, batch, history, model):
+        return x_sorted, y_sorted
+
+    return data_function
+
+
 def order_by_loss(dataset, model):
     size_train = len(dataset.y_train)
     scores = model.predict(dataset.x_train)
@@ -96,12 +111,18 @@ def data_function_from_input(curriculum, batch_size,
         
     if curriculum == "None" or curriculum == "vanilla":
         data_function = train_keras_model.basic_data_function
+
     elif curriculum in ["curriculum", "vanilla", "anti", "random"]:
         data_function = exponent_data_function_generator(dataset, order, batch_increase, increase_amount,
                                                          starting_percent, batch_size=batch_size)
-        
+
+    elif curriculum == "curriculum_custom":
+        data_function = curriculum_custom_data_function_generator(
+            dataset, order, batch_size=batch_size
+        )
+    
     else:
-        print("unsupprted condition (not vanilla/curriculum/random/anti)")
+        print("unsupprted condition (not vanilla/curriculum/random/anti/curriculum_custom)")
         print("got the value:", curriculum)
         raise ValueError
     return data_function
@@ -235,7 +256,7 @@ def run_expriment(args):
     elif args.curriculum == "random":
         np.random.shuffle(order)
         
-    elif (args.curriculum not in ["None", "curriculum", "vanilla"]):
+    elif (args.curriculum not in ["None", "curriculum", "vanilla", "curriculum_custom"]):
         print("--curriculum value of %s is not supported!" % args.curriculum)
         raise ValueError
         
@@ -258,6 +279,7 @@ def run_expriment(args):
                                                  args.increase_amount,
                                                  args.starting_percent)
         
+        
         print("starting repeat number: " + str(repeat + 1))
         model = model_lib.build_classifier_model(dataset)
         
@@ -266,11 +288,15 @@ def run_expriment(args):
                                         loss='categorical_crossentropy',
                                         optimizer="sgd")
         
-        
+        if args.curriculum == "curriculum_custom":
+            batch_strategy = "curriculum_easy_hard"
+        else:
+            batch_strategy = "random"
         
         history = train_keras_model.train_model_batches(model,
                                                         dataset,
                                                         num_batches,
+                                                        batch_strategy=batch_strategy,
                                                         verbose=args.verbose,
                                                         batch_size=args.batch_size,
                                                         initial_lr=args.learning_rate,
@@ -310,6 +336,9 @@ def run_expriment(args):
         })
         df_val.to_csv(output_path + "_val_history.csv", index=False)
         df_train.to_csv(output_path + "_train_history.csv", index=False)
+
+    if "pacing" in combined_history and output_path:
+        pd.DataFrame(combined_history["pacing"]).to_csv(output_path + "_pacing2.csv", index=False)
     
 
 if __name__ == "__main__":
@@ -319,7 +348,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_path", default=r'', help="where to save the model")
     parser.add_argument("--verbose", default=True, type=bool, help="print more stuff")
     
-    parser.add_argument("--curriculum", "-cl", default="curriculum", help="which test case to use. supports: vanilla, curriculum, anti and random")
+    parser.add_argument("--curriculum", "-cl", default="curriculum", help="which test case to use. supports: vanilla, curriculum, anti, random, curriculum_custom")
     parser.add_argument("--batch_size", default=100, type=int, help="determine batch size")
     parser.add_argument("--num_epochs", default=140, type=int, help="number of epochs to train on")
 #    parser.add_argument("--num_epochs", default=10, type=int)

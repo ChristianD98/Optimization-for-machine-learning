@@ -1,11 +1,12 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# Charger les fichiers CSV
-train_df = pd.read_csv("results/test_run2_train_history.csv")
-val_df = pd.read_csv("results/test_run2_val_history.csv")
+# === Chargement des fichiers ===
+train_df = pd.read_csv("results/test_custom_train_history.csv")
+val_df = pd.read_csv("results/test_custom_val_history.csv")
+pacing_df = pd.read_csv("results/test_custom_pacing2.csv")
 
-# Créer le graphique
+# === Figure 1 : Training vs Validation Accuracy ===
 plt.figure(figsize=(12, 6))
 
 # Courbe d'entraînement
@@ -28,6 +29,17 @@ if "std_val_acc" in val_df.columns and not val_df["std_val_acc"].isnull().all():
 plt.xlabel("Batch Number")
 plt.ylabel("Accuracy")
 plt.title("Training vs Validation Accuracy")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+# === Figure 2 : Easy vs Hard Sample Ratio par batch ===
+plt.figure(figsize=(12, 5))
+plt.plot(pacing_df["batch"], pacing_df["easy_pct"], label="Easy Sample %")
+plt.plot(pacing_df["batch"], pacing_df["hard_pct"], label="Hard Sample %")
+plt.xlabel("Batch Number")
+plt.ylabel("Sample Percentage")
+plt.title("Pacing Schedule: Easy vs Hard Sample Ratio")
 plt.legend()
 plt.grid(True)
 plt.tight_layout()
