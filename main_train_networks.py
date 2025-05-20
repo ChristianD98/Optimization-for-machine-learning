@@ -9,6 +9,8 @@ import numpy as np
 
 import os.path
 import sys
+
+import datasets.esc50
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 import datasets.cifar100_subset
@@ -49,6 +51,8 @@ def exponent_data_function_generator(dataset, order, batches_to_increase,
     
     def data_function(x, y, batch, history, model):
         nonlocal cur_percent, cur_data_x, cur_data_y
+
+        print(f"current batch: {batch}, current percent: {cur_percent}")
         
         if batch % batches_to_increase == 0:
             if batch == 0:
@@ -61,6 +65,51 @@ def exponent_data_function_generator(dataset, order, batches_to_increase,
                 new_data = order[:data_limit]
                 cur_data_x = dataset.x_train[new_data, :, :, :]
                 cur_data_y = dataset.y_train_labels[new_data, :]               
+        return cur_data_x, cur_data_y
+
+    return data_function
+
+
+def custom_exponent_data_function_generator(dataset, order, batches_to_increase,
+                                     increase_amount, starting_percent,
+                                     batch_size=100):
+
+    size_data = dataset.x_train.shape[0]
+    
+    # Initialize the limits
+    upper_limit_percent = starting_percent
+    lower_limit_percent = 0
+    
+    cur_data_x = dataset.x_train
+    cur_data_y = dataset.y_train_labels
+    
+    def data_function(x, y, batch, history, model):
+        nonlocal upper_limit_percent, lower_limit_percent, cur_data_x, cur_data_y
+
+        print(f"current batch: {batch}, lower limit: {lower_limit_percent}, upper limit: {upper_limit_percent}")
+
+        # Initial phase: when batch is less than batches_to_increase
+        if batch < batches_to_increase:
+            lower_limit_percent = 0
+            upper_limit_percent = starting_percent
+        elif batch % batches_to_increase == 0:
+            # Update limits when we hit a multiple of batches_to_increase
+            lower_limit_percent = upper_limit_percent  # Previous upper limit becomes new lower limit
+            upper_limit_percent = min(upper_limit_percent * increase_amount, 1.0)  # New upper limit (capped at 1.0)
+        
+        # If we're past 1/4 of the cycle, reset lower limit to 0
+        if batch % batches_to_increase > batches_to_increase / 4:
+            lower_limit_percent = 0
+        
+        # Convert percentages to indices
+        lower_limit_idx = int(np.ceil(size_data * lower_limit_percent))
+        upper_limit_idx = int(np.ceil(size_data * upper_limit_percent))
+        
+        # Get the data subset based on the current limits
+        new_data = order[lower_limit_idx:upper_limit_idx]
+        cur_data_x = dataset.x_train[new_data, :, :, :]
+        cur_data_y = dataset.y_train_labels[new_data, :]
+        
         return cur_data_x, cur_data_y
 
     return data_function
@@ -120,6 +169,9 @@ def data_function_from_input(curriculum, batch_size,
         data_function = curriculum_custom_data_function_generator(
             dataset, order, batch_size=batch_size
         )
+    elif curriculum == "curriculum_mixed":
+        data_function = custom_exponent_data_function_generator(dataset, order, batch_increase, increase_amount,
+                                                         starting_percent, batch_size=batch_size)
     
     else:
         print("unsupprted condition (not vanilla/curriculum/random/anti/curriculum_custom)")
@@ -140,7 +192,8 @@ def load_dataset(dataset_name):
 
     elif dataset_name == "cifar100":
         dataset = datasets.cifar100.Cifar100(normalize=False)
-        
+    elif dataset_name == "esc50":
+        dataset = datasets.esc50.Esc50()
     else:
         print("do not support datset: %s" % dataset_name)
         raise ValueError
@@ -152,28 +205,38 @@ def load_model():
     return models.cifar100_model.Cifar100_Model()
 
 
-def load_order(order_name, dataset):
-    classic_networks = ["vgg16", "vgg19", "inception", "xception", "resnet"]
-    if order_name in classic_networks:
-        network_name = order_name
-        if not transfer_learning.svm_scores_exists(dataset,
-                                                   network_name=network_name):
-            if order_name == "inception":
-                (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_inception(dataset)
-    
-            else:
-                (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_classic_networks(dataset,
-                                                                                                                       network_name)
-        else:
-            (transfer_values_train, transfer_values_test) = (None, None)
-
-        train_scores, test_scores = transfer_learning.get_svm_scores(transfer_values_train, dataset.y_train,
-                                                                     transfer_values_test, dataset.y_test, dataset,
-                                                                     network_name=network_name)
-        order = transfer_learning.rank_data_according_to_score(train_scores, dataset.y_train)
+def load_order(modality: str, dataset, order_name: str = "inception"):
+    if modality == "image":
+        classic_networks = ["vgg16", "vgg19", "inception", "xception", "resnet"]
+        if order_name in classic_networks:
+            network_name = order_name
+            if not transfer_learning.svm_scores_exists(dataset,
+                                                    network_name=network_name):
+                if order_name == "inception":
+                    (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_inception(dataset)
         
+                else:
+                    (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_classic_networks(dataset,
+                                                                                                                        network_name)
+            else:
+                (transfer_values_train, transfer_values_test) = (None, None)
+
+            train_scores, test_scores = transfer_learning.get_svm_scores(transfer_values_train, dataset.y_train,
+                                                                        transfer_values_test, dataset.y_test, dataset,
+                                                                        network_name=network_name)
+            order = transfer_learning.rank_data_according_to_score(train_scores, dataset.y_train)
+            
+        else:
+            print("do not support order: %s" % args.order)
+            raise ValueError
+    elif modality == "audio":
+        (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_clap(dataset)
+        train_scores, test_scores = transfer_learning.get_svm_scores(transfer_values_train, dataset.y_train,
+                                                                    transfer_values_test, dataset.y_test, dataset,
+                                                                    network_name="clap")
+        order = transfer_learning.rank_data_according_to_score(train_scores, dataset.y_train)
     else:
-        print("do not support order: %s" % args.order)
+        print("do not support modality: %s" % modality)
         raise ValueError
     
     return order
@@ -247,7 +310,7 @@ def run_expriment(args):
     lr_scheduler = exponent_decay_lr_generator(args.lr_decay_rate,
                                                args.minimal_lr,
                                                args.lr_batch_size)
-    order = load_order(args.order, dataset)
+    order = load_order(args.modality, dataset, args.order)
 
     order = balance_order(order, dataset)    
     
@@ -256,7 +319,7 @@ def run_expriment(args):
     elif args.curriculum == "random":
         np.random.shuffle(order)
         
-    elif (args.curriculum not in ["None", "curriculum", "vanilla", "curriculum_custom"]):
+    elif (args.curriculum not in ["None", "curriculum", "vanilla", "curriculum_custom", "curriculum_mixed"]):
         print("--curriculum value of %s is not supported!" % args.curriculum)
         raise ValueError
         
@@ -341,12 +404,123 @@ def run_expriment(args):
         pd.DataFrame(combined_history["pacing"]).to_csv(output_path + "_pacing2.csv", index=False)
     
 
+def run_experiment_esc50(args):
+    """
+    Run experiment specifically for ESC-50 audio dataset.
+    This function mirrors run_expriment but is specialized for audio data.
+    """
+    # Set modality to audio for ESC-50
+    args.modality = "audio"
+    
+    # Load ESC-50 dataset
+    dataset = datasets.esc50.Esc50(cache_to_npz=True)
+    
+    # Load audio model - replace with appropriate audio model
+    from models.audio_model import AudioModel
+    model_lib = AudioModel()
+
+    size_train = dataset.x_train.shape[0]
+    num_batches = (args.num_epochs * size_train) // args.batch_size
+
+    # Same learning rate scheduler as the original function
+    lr_scheduler = exponent_decay_lr_generator(args.lr_decay_rate,
+                                               args.minimal_lr,
+                                               args.lr_batch_size)
+    
+    # Use CLAP for audio transfer learning
+    order = load_order("audio", dataset, "clap")
+
+    # Balance order by class just like with images
+    order = balance_order(order, dataset)    
+    
+    if args.curriculum == "anti":
+        order = np.flip(order, 0)
+    elif args.curriculum == "random":
+        np.random.shuffle(order)
+    elif (args.curriculum not in ["None", "curriculum", "vanilla", "curriculum_custom", "curriculum_mixed"]):
+        print("--curriculum value of %s is not supported!" % args.curriculum)
+        raise ValueError
+        
+    # Normalize dataset
+    # dataset.normalize_dataset()
+    
+    output_path = args.output_path if args.output_path else None
+    
+    ## start experiment
+    start_time_all = time.time()
+    histories = []
+    
+    for repeat in range(args.repeats):
+        
+        data_function = data_function_from_input(args.curriculum,
+                                                 args.batch_size,
+                                                 dataset,
+                                                 order,
+                                                 args.batch_increase,
+                                                 args.increase_amount,
+                                                 args.starting_percent)
+        
+        print("starting repeat number: " + str(repeat + 1))
+        model = model_lib.build_classifier_model(dataset)
+        
+        train_keras_model.compile_model(model,
+                                        initial_lr=args.learning_rate,
+                                        loss='categorical_crossentropy',
+                                        optimizer="sgd")
+        
+        batch_strategy = "curriculum_easy_hard" if args.curriculum == "curriculum_custom" else "random"
+        
+        history = train_keras_model.train_model_batches(model,
+                                                        dataset,
+                                                        num_batches,
+                                                        batch_strategy=batch_strategy,
+                                                        verbose=args.verbose,
+                                                        batch_size=args.batch_size,
+                                                        initial_lr=args.learning_rate,
+                                                        lr_scheduler=lr_scheduler,
+                                                        data_function=data_function)
+
+        histories.append(history)
+        if output_path:
+            model.save(output_path + f"_repeat{repeat+1}_model.h5")
+        
+    print("time all: --- %s seconds ---" % (time.time() - start_time_all))
+    
+    combined_history = combine_histories(histories)
+        
+    print("training acc:", combined_history['acc'][-1])
+    print("test acc:", combined_history['val_acc'][-1])
+    
+    plot_path = output_path + "_plot.png" if output_path else None
+    graph_from_history(combined_history, plot_train=False, plot_test=True, output_path=plot_path)
+
+    if output_path:
+        df_val = pd.DataFrame({
+            "batch_num": combined_history["batch_num"],
+            "val_acc": combined_history["val_acc"],
+            "val_loss": combined_history["val_loss"],
+            "std_val_acc": combined_history.get("std_val_acc", [None] * len(combined_history["val_acc"]))
+        })
+
+        df_train = pd.DataFrame({
+            "train_batch": list(range(len(combined_history["acc"]))),
+            "acc": combined_history["acc"],
+            "loss": combined_history["loss"],
+            "std_acc": combined_history.get("std_acc", [None] * len(combined_history["acc"]))
+        })
+        df_val.to_csv(output_path + "_val_history.csv", index=False)
+        df_train.to_csv(output_path + "_train_history.csv", index=False)
+
+    if "pacing" in combined_history and output_path:
+        pd.DataFrame(combined_history["pacing"]).to_csv(output_path + "_pacing2.csv", index=False)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
 
     parser.add_argument("--dataset", default="cifar100_subset_16", help="dataset to use")
     parser.add_argument("--output_path", default=r'', help="where to save the model")
     parser.add_argument("--verbose", default=True, type=bool, help="print more stuff")
+    parser.add_argument("--modality", default="image", choices=["image", "audio"], help="data modality: image or audio")
     
     parser.add_argument("--curriculum", "-cl", default="curriculum", help="which test case to use. supports: vanilla, curriculum, anti, random, curriculum_custom")
     parser.add_argument("--batch_size", default=100, type=int, help="determine batch size")
@@ -374,4 +548,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    run_expriment(args)
+    if args.dataset == "esc50":
+        run_experiment_esc50(args)
+    else:
+        run_expriment(args)

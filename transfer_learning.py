@@ -16,6 +16,7 @@ from sklearn import svm
 import numpy as np
 import pickle
 import classic_nets_imagenet
+import clap_net
 
 # download the models / datasets
 def get_transfer_values_inception(dataset):
@@ -106,6 +107,33 @@ def get_transfer_values_classic_networks(dataset, network_name):
         with open(file_path_cache_test, "wb") as pick_file:
             pickle.dump(transfer_values_test, pick_file)
 
+    return transfer_values_train, transfer_values_test
+
+
+def get_transfer_values_clap(dataset, clap_model_name="laion/clap-htsat-fused"):
+    """
+    Get transfer values using CLAP for audio datasets.
+    
+    Parameters:
+    -----------
+    dataset : object
+        Dataset object containing audio data
+    clap_model_name : str
+        Name of the CLAP model to use
+        
+    Returns:
+    --------
+    tuple
+        (transfer_values_train, transfer_values_test) containing the embeddings
+    """
+    import clap_net
+    
+    # Get the CLAP embeddings using the clap_net module
+    transfer_values_train, transfer_values_test = clap_net.get_transfer_values_clap(
+        dataset, 
+        clap_model_name=clap_model_name
+    )
+    
     return transfer_values_train, transfer_values_test
 
 

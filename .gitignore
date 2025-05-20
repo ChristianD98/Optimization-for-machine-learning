@@ -1,2 +1,4 @@
 data/cifar10/
 data/cifar100/
+data/esc50/
+*__pycache__
