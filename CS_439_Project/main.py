@@ -1,14 +1,18 @@
 import os
 import pandas as pd
-import numpy as np
 from data import dataset
 from ConvNet import MNIST_Model
 from scoring import stddevs
 from pacing import PacingGenerator, BatchMetricsLogger, PeriodicValidationCallback
 
-# ===========================
-n_runs = 2
-mode = 'anti'  # 'vanilla', 'curriculum', 'anti', 'challenger'
+# =================================Model=======================================#
+#FOR TRANSFER LEARNING
+#difficulty_scores = np.load("Bonjour/vgg16_transfer_difficulty.npy")
+#stddevs = difficulty_scores
+
+
+n_runs = 10
+mode = 'challenger'  # 'vanilla', 'curriculum', 'anti', 'challenger'
 output_dir = f"./results_{mode}"
 os.makedirs(output_dir, exist_ok=True)
 
@@ -21,8 +25,7 @@ for run in range(n_runs):
 
     batch_logger = BatchMetricsLogger()
     periodic_val_logger = PeriodicValidationCallback(
-        validation_data=(dataset.x_test, dataset.y_test), interval=100
-    )
+        validation_data=(dataset.x_test, dataset.y_test), interval=100)
 
     omega_generator = PacingGenerator(
         x_data=dataset.x_train,
@@ -34,7 +37,7 @@ for run in range(n_runs):
         starting_fraction=0.05,
         inc=1.9,
         step_length=100
-    )
+        )
 
     model = MNIST_Model().build_classifier_model(dataset)
     model.compile(optimizer='sgd', loss='categorical_crossentropy', metrics=['accuracy'])
@@ -43,9 +46,9 @@ for run in range(n_runs):
         omega_generator,
         epochs=3,
         callbacks=[batch_logger, periodic_val_logger],
-        verbose=0
-    )
+        verbose=0)
 
+    # +++++++++++++++++++ Data collection +++++++++++++++++++++++++++++++++++++++++++++++++ #
     # Store batch logs
     df = pd.DataFrame(batch_logger.batch_logs)
     df['run'] = run
@@ -62,15 +65,10 @@ for run in range(n_runs):
 
 
 
-
-
 # ====================================== Data collection ================================ #
 # Per-batch training metric summary
 combined_df = pd.concat(all_batch_logs, ignore_index=True)
-summary_df = combined_df.groupby('batch').agg({
-    'loss': ['mean', 'std'],
-    'accuracy': ['mean', 'std']
-}).reset_index()
+summary_df = combined_df.groupby('batch').agg({'loss': ['mean', 'std'], 'accuracy': ['mean', 'std']}).reset_index()
 summary_df.columns = ['batch', 'mean_loss', 'std_loss', 'mean_accuracy', 'std_accuracy']
 summary_df.to_csv(f"{output_dir}/summary_batch_metrics.csv", index=False)
 
@@ -78,10 +76,7 @@ summary_df.to_csv(f"{output_dir}/summary_batch_metrics.csv", index=False)
 results_df = pd.DataFrame(test_results)
 mean_row = results_df.mean(numeric_only=True)
 std_row = results_df.std(numeric_only=True)
-results_df = pd.concat([
-    results_df,
-    pd.DataFrame([mean_row.rename('mean'), std_row.rename('std')])
-])
+results_df = pd.concat([results_df, pd.DataFrame([mean_row.rename('mean'), std_row.rename('std')])])
 results_df.to_csv(f"{output_dir}/test_results_summary.csv", index=False)
 
 # Periodic validation accuracy summary
@@ -90,7 +85,7 @@ val_summary_df = val_combined_df.groupby('batch')['val_accuracy'].agg(['mean', '
 val_summary_df.columns = ['batch', 'mean_val_accuracy', 'std_val_accuracy']
 val_summary_df.to_csv(f"{output_dir}/periodic_validation_summary.csv", index=False)
 
-# Final confirmation
+
 print(f"✅ Per-batch metrics summary saved to '{output_dir}/summary_batch_metrics.csv'")
 print(f"✅ Test results with mean and std saved to '{output_dir}/test_results_summary.csv'")
 print(f"✅ Periodic validation accuracy summary saved to '{output_dir}/periodic_validation_summary.csv'")

@@ -88,7 +88,7 @@ class PacingGenerator(Sequence):
             indices = np.random.choice(current_pool, self.batch_size, replace=True)
         
         else:
-            raise ValueError("Unsupported mode")
+            raise ValueError("Unsupported pacing function")
         
         return self.x_data[indices], self.y_data[indices]
 

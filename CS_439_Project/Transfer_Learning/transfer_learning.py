@@ -8,18 +8,20 @@ This is a temporary script file.
 import os
 
 # Functions and classes for loading and using the Inception model.
-import inception
+import inception as inception
 #import stl10
 from inception import transfer_values_cache
 
 from sklearn import svm
+from sklearn.svm import LinearSVC
+from sklearn.calibration import CalibratedClassifierCV
 import numpy as np
 import pickle
-import classic_nets_imagenet
+import classic_nets_imagenet as classic_nets_imagenet
 
 # download the models / datasets
 def get_transfer_values_inception(dataset):
-    data_dir = 'Bonjour'
+    data_dir = 'Transfer_Learning_Dataset'
     inception.data_dir = os.path.join(data_dir, 'inception/')
     inception.maybe_download()
 #    dataset.maybe_download()
@@ -89,6 +91,7 @@ def get_transfer_values_classic_networks(dataset, network_name):
             transfer_values_train = pickle.load(pick_file)
     else:
         transfer_values_train = classic_nets_imagenet.classify_img(dataset.x_train, network_name)
+        os.makedirs(dataset.data_dir, exist_ok=True)
         with open(file_path_cache_train, "wb") as pick_file:
             pickle.dump(transfer_values_train, pick_file)
 
@@ -107,6 +110,8 @@ def get_transfer_values_classic_networks(dataset, network_name):
 
 
 def transfer_values_svm_scores(train_x, train_y, test_x, test_y):
+    #base_clf = LinearSVC(max_iter=10000)
+    #clf = CalibratedClassifierCV(base_clf, cv=3)
     clf = svm.SVC(probability=True)
     print("fitting svm")
     clf.fit(train_x, train_y)
@@ -124,7 +129,7 @@ def svm_scores_exists(dataset, network_name="inception",
     if dataset is None:
         data_dir = alternative_data_dir
     else:
-        data_dir = "Bonjour"
+        data_dir = "Transfer_Learning_Dataset"
     
     svm_train_path = os.path.join(data_dir, network_name + 'svm_train_values.pkl')
     svm_test_path = os.path.join(data_dir, network_name + 'svm_test_values.pkl')
@@ -137,7 +142,7 @@ def get_svm_scores(transfer_values_train, y_train, transfer_values_test,
     if dataset is None:
         data_dir = alternative_data_dir
     else:
-        data_dir = "Bonjour"
+        data_dir = "Transfer_Learning_Dataset"
     
     svm_train_path = os.path.join(data_dir, network_name + 'svm_train_values.pkl')
     svm_test_path = os.path.join(data_dir, network_name + 'svm_test_values.pkl')
