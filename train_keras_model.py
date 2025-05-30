@@ -17,7 +17,7 @@ def compile_model(model, initial_lr=1e-3, loss='categorical_crossentropy',
                                           epsilon=None, decay=0.0,
                                           amsgrad=False)
     elif optimizer == 'sgd':
-        optimizer = keras.optimizers.SGD(initial_lr, momentum=momentum)
+        optimizer = keras.optimizers.legacy.SGD(initial_lr, momentum=momentum)
     else:
         print("optimizer not supported")
         raise ValueError
@@ -38,7 +38,7 @@ def basic_lr_scheduler(initial_lr, batch, history):
 def generate_random_batch(x, y, batch_size):
     size_data = x.shape[0]
     cur_batch_idxs = np.random.choice(size_data, batch_size, replace=False)
-    return x[cur_batch_idxs, :, :, :], y[cur_batch_idxs,:]
+    return x[cur_batch_idxs, :, :], y[cur_batch_idxs,:]
 
 def generate_curriculum_batch_easy_hard_mix(x, y, batch_size, batch_index, num_batches):
     total_size = x.shape[0]

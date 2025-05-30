@@ -6,34 +6,31 @@ import download
 import sys
 from six.moves import cPickle
 from keras import backend as K
-from datasets.Dataset import one_hot_encoded
-import datasets.Dataset
+from local_datasets.Dataset import one_hot_encoded
+import local_datasets.Dataset
 
 import numpy as np
 
-    
-class Cifar10(datasets.Dataset.Dataset):
 
-    def __init__(self, smaller_data_size=None, normalize=True):
-        self.name = 'cifar10'
-            
+class Cifar100(local_datasets.Dataset.Dataset):
+
+    def __init__(self, normalize=True):
+        self.name = 'cifar100'
+        
+        self.subsets_idxes = list(range(100))
+
         # Internet URL for the tar-file with the Inception model.
         # Note that this might change in the future and will need to be updated.
-        self.data_url = r"https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
+        self.data_url = r"https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz"
 
         # Directory to store the downloaded data.
-        self.data_dir = "./data/cifar10/"
+        self.data_dir = "./data/cifar100/"
 
         self.height, self.width, self.depth = 32, 32, 3
-        self.n_classes = 10
+        self.n_classes = len(self.subsets_idxes)
         self.img_size_flat = self.height * self.width * self.depth
 
-
-        self.smaller_data_set = False
-        if smaller_data_size is not None:
-            self.smaller_data_set = True
-            self.data_size = smaller_data_size
-        super(Cifar10, self).__init__(normalize=normalize)
+        super(Cifar100, self).__init__(normalize=normalize)
 
     def _load_batch(self, fpath, label_key='labels'):
         """Internal utility for parsing CIFAR data.
@@ -60,7 +57,7 @@ class Cifar10(datasets.Dataset.Dataset):
         data = d['data']
         labels = d[label_key]
 
-        data = data.reshape(data.shape[0], self.depth, self.width, self.height)
+        data = data.reshape(data.shape[0], 3, 32, 32)
         return data, labels
 
     def maybe_download(self):
@@ -72,34 +69,48 @@ class Cifar10(datasets.Dataset.Dataset):
         download.maybe_download_and_extract(url=self.data_url, download_dir=self.data_dir)
 
     def load_training_data(self):
-        dirname = 'cifar-10-batches-py'
+        dirname = 'cifar-100-python'
         path = os.path.join(self.data_dir, dirname)
-        n_train_batchs = 5
-        x_train = np.zeros((0, self.depth, self.width, self.height))
-        y_train = []
-        for batch in range(n_train_batchs):
-            fpath = os.path.join(path, 'data_batch_' + str(batch + 1))
-            cur_data, cur_labels = self._load_batch(fpath)
-            x_train = np.concatenate((cur_data, x_train), axis=0)
-            y_train = cur_labels + y_train
-        x_train = x_train.astype(np.uint8)
+        fpath = os.path.join(path, 'train')
+        x_train, y_train_fine = self._load_batch(fpath, 'fine_labels')
+        data_size = len(y_train_fine)
+
         if K.image_data_format() == 'channels_last':
             x_train = x_train.transpose(0, 2, 3, 1)
+            
+        relevant_idxes = [i for i in range(data_size) if y_train_fine[i] in self.subsets_idxes]
+        x_train = x_train[relevant_idxes, :, :, :]
+        y_train = np.asarray(y_train_fine)[relevant_idxes]
+        y_train_values = sorted(list(set(y_train)))
+        assert(len(y_train_values) == self.n_classes)
+        map_dict = {val: i for i, val in enumerate(y_train_values)}
+        for i, y in enumerate(y_train):
+            y_train[i] = map_dict[y]
+
         y_train_labels = one_hot_encoded(y_train, num_classes=self.n_classes)
-        return x_train, np.array(y_train), y_train_labels
-    
-    
+        return x_train, y_train, y_train_labels
+
     def load_test_data(self):
-        dirname = 'cifar-10-batches-py'
+        dirname = 'cifar-100-python'
         path = os.path.join(self.data_dir, dirname)
-        fpath = os.path.join(path, 'test_batch')
-        x_test, y_test = self._load_batch(fpath)
+        fpath = os.path.join(path, 'test')
+        x_test, y_test_fine = self._load_batch(fpath, 'fine_labels')
+        data_size = len(y_test_fine)
 
         if K.image_data_format() == 'channels_last':
             x_test = x_test.transpose(0, 2, 3, 1)
+            
+        relevant_idxes = [i for i in range(data_size) if y_test_fine[i] in self.subsets_idxes]
+        x_test = x_test[relevant_idxes, :, :, :]
+        y_test = np.asarray(y_test_fine)[relevant_idxes]
+        y_test_values = sorted(list(set(y_test)))
+        assert(len(y_test_values) == self.n_classes)
+        map_dict = {val: i for i, val in enumerate(y_test_values)}
+        for i, y in enumerate(y_test):
+            y_test[i] = map_dict[y]
 
         y_test_labels = one_hot_encoded(y_test, num_classes=self.n_classes)
-        return x_test, np.array(y_test), y_test_labels
+        return x_test, y_test, y_test_labels
 
     def normalize_dataset(self):
         if not self.normalized:

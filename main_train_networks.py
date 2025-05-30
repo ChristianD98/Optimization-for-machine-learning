@@ -11,10 +11,12 @@ import os.path
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-import datasets.cifar100_subset
-import datasets.cifar10
-import datasets.cifar100
+import local_datasets.cifar100_subset
+import local_datasets.cifar10
+import local_datasets.cifar100
+import local_datasets.esc50
 import models.cifar100_model
+import models.esc50_model
 import train_keras_model
 import transfer_learning
 import pickle
@@ -132,35 +134,43 @@ def load_dataset(dataset_name):
     
     if dataset_name.startswith('cifar100_subset'):
         superclass_idx = int(dataset_name[len("cifar100_subset_"):])
-        dataset = datasets.cifar100_subset.Cifar100_Subset(supeclass_idx=superclass_idx,
+        dataset = local_datasets.cifar100_subset.Cifar100_Subset(supeclass_idx=superclass_idx,
                                                   normalize=False)
     
     elif dataset_name == "cifar10":
-        dataset = datasets.cifar10.Cifar10(normalize=False)
+        dataset = local_datasets.cifar10.Cifar10(normalize=False)
 
     elif dataset_name == "cifar100":
-        dataset = datasets.cifar100.Cifar100(normalize=False)
+        dataset = local_datasets.cifar100.Cifar100(normalize=False)
         
+    elif dataset_name == "esc50":
+        dataset = local_datasets.esc50.ESC50(normalize=False)
+    
     else:
-        print("do not support datset: %s" % dataset_name)
+        print("do not support dataset: %s" % dataset_name)
         raise ValueError
 
     return dataset
 
 
-def load_model():
-    return models.cifar100_model.Cifar100_Model()
+def load_model(model_name, dataset_name):
+    if dataset_name.startswith('esc50'):
+        return models.esc50_model.ESC50_Model()
+    else:
+        return models.cifar100_model.Cifar100_Model()
 
 
 def load_order(order_name, dataset):
-    classic_networks = ["vgg16", "vgg19", "inception", "xception", "resnet"]
+    classic_networks = ["vgg16", "vgg19", "inception", "xception", "resnet", "clap"]
     if order_name in classic_networks:
         network_name = order_name
         if not transfer_learning.svm_scores_exists(dataset,
                                                    network_name=network_name):
             if order_name == "inception":
                 (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_inception(dataset)
-    
+            elif order_name == "clap":
+                # Use CLAP embeddings for ESC50
+                (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_clap(dataset)
             else:
                 (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_classic_networks(dataset,
                                                                                                                        network_name)
@@ -173,7 +183,7 @@ def load_order(order_name, dataset):
         order = transfer_learning.rank_data_according_to_score(train_scores, dataset.y_train)
         
     else:
-        print("do not support order: %s" % args.order)
+        print("do not support order: %s" % order_name)
         raise ValueError
     
     return order
@@ -239,7 +249,7 @@ def graph_from_history(history, plot_train=False, plot_test=True, output_path=No
 
 def run_expriment(args):
     dataset = load_dataset(args.dataset)
-    model_lib = load_model()
+    model_lib = load_model(args.model, args.dataset)
 
     size_train = dataset.x_train.shape[0]
     num_batches = (args.num_epochs * size_train) // args.batch_size
@@ -247,8 +257,8 @@ def run_expriment(args):
     lr_scheduler = exponent_decay_lr_generator(args.lr_decay_rate,
                                                args.minimal_lr,
                                                args.lr_batch_size)
-    order = load_order(args.order, dataset)
 
+    order = load_order(args.order, dataset)
     order = balance_order(order, dataset)    
     
     if args.curriculum == "anti":
@@ -344,31 +354,22 @@ def run_expriment(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='')
 
-    parser.add_argument("--dataset", default="cifar100_subset_16", help="dataset to use")
+    parser.add_argument("--dataset", default="cifar100_subset_16", help="dataset to use (cifar10, cifar100, cifar100_subset_N, esc50)")
+    parser.add_argument("--model", default="cifar", help="model to use (cifar, esc50)")
     parser.add_argument("--output_path", default=r'', help="where to save the model")
     parser.add_argument("--verbose", default=True, type=bool, help="print more stuff")
     
     parser.add_argument("--curriculum", "-cl", default="curriculum", help="which test case to use. supports: vanilla, curriculum, anti, random, curriculum_custom")
     parser.add_argument("--batch_size", default=100, type=int, help="determine batch size")
     parser.add_argument("--num_epochs", default=140, type=int, help="number of epochs to train on")
-#    parser.add_argument("--num_epochs", default=10, type=int)
 
-#     lr params    
-    parser.add_argument("--learning_rate", "-lr", default=0.035, type=float)
-    parser.add_argument("--lr_decay_rate", default=1.5, type=float)
-    parser.add_argument("--minimal_lr", default=1e-4, type=float)
-    parser.add_argument("--lr_batch_size", default=300, type=int)    
-    
-#    parser.add_argument("--learning_rate", "-lr", default=0.05, type=float, help="initial learning")
-#    parser.add_argument("--lr_decay_rate", default=1.8, type=float, help="factor by which we drop learning rate exponentially")
-#    parser.add_argument("--minimal_lr", default=1e-4, type=float, help="min learning rate we allow")
-#    parser.add_argument("--lr_batch_size", default=500, type=int, help="interval of batches in which we drop the learning rate")    
+    # ...existing code...
     
     # curriculum params
     parser.add_argument("--batch_increase", default=100, type=int, help="interval of batches to increase the amount of data we sample from")
     parser.add_argument("--increase_amount", default=1.9, type=float, help="factor by which we increase the amount of data we sample from")
     parser.add_argument("--starting_percent", default=100/2500, type=float, help="percent of data to sample from in the inital batch")
-    parser.add_argument("--order", default="inception", help="determine the order of the examples, supports transfer learning. options: inception, vgg16, vgg19, xception, resnet")
+    parser.add_argument("--order", default="inception", help="determine the order of the examples, supports transfer learning. options: inception, vgg16, vgg19, xception, resnet, clap (for ESC50)")
     
     parser.add_argument("--repeats", default=1, type=int, help="number of times to repeat the experiment")
     

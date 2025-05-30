@@ -169,3 +169,54 @@ def rank_data_according_to_score(train_scores, y_train, reverse=False, random=Fa
     if random:
         np.random.shuffle(res)
     return res
+
+def get_transfer_values_clap(dataset):
+    """
+    Loads pre-computed CLAP embeddings for the ESC50 dataset.
+    
+    Args:
+        dataset: An instance of the ESC50 dataset class
+        
+    Returns:
+        A tuple of (transfer_values_train, transfer_values_test) with CLAP embeddings
+    """
+    data_dir = r'./data/esc50_embeddings/'
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
+        from datasets import load_dataset
+        embeddings_dataset = load_dataset("renumics/esc50-clap2023-results")
+        # Save the dataset to the specified directory
+        embeddings_dataset.save_to_disk(data_dir)
+    else:
+        from datasets import load_from_disk
+        embeddings_dataset = load_from_disk(data_dir)
+
+    embeddings_dataset = embeddings_dataset["train"]
+    embeddings_dataset = [e["audio_embedding"] for e in embeddings_dataset]
+    # Convert to numpy array
+    embeddings_dataset = np.array(embeddings_dataset)
+    # Split into train and test sets
+    train_size = len(dataset.x_train)
+    transfer_values_train = embeddings_dataset[:train_size]
+    transfer_values_test = embeddings_dataset[train_size:]
+    
+    return transfer_values_train, transfer_values_test
+
+
+if __name__ == "__main__":
+    # Example usage
+    from local_datasets.esc50 import ESC50
+    esc50_dataset = ESC50(normalize=False)
+    
+    # Get transfer values using CLAP model
+    transfer_values_train, transfer_values_test = get_transfer_values_clap(esc50_dataset)
+    
+    # Get SVM scores
+    train_scores, test_scores = get_svm_scores(transfer_values_train, esc50_dataset.y_train,
+                                               transfer_values_test, esc50_dataset.y_test,
+                                               esc50_dataset, network_name="clap")
+    
+    print("Train scores shape:", train_scores.shape)
+    print("Test scores shape:", test_scores.shape)
+    print(f"Scores for first 5 training samples: {train_scores[:5]}")
+    print(f"Scores for first 5 test samples: {test_scores[:5]}")

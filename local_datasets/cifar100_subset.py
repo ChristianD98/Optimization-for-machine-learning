@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+
 import os
 import download
 import sys
 from six.moves import cPickle
 from keras import backend as K
-from datasets.Dataset import one_hot_encoded
-import datasets.Dataset
-
 import numpy as np
+from local_datasets.Dataset import one_hot_encoded
+import local_datasets.Dataset
 
+                 
+class Cifar100_Subset(local_datasets.Dataset.Dataset):
 
-class Cifar100(datasets.Dataset.Dataset):
-
-    def __init__(self, normalize=True):
-        self.name = 'cifar100'
+    def __init__(self, supeclass_idx=16, normalize=True, order_name=""):
         
-        self.subsets_idxes = list(range(100))
+        self.superclass_idx = supeclass_idx
+        self.name = 'cifar_100_superclass_' + str(self.superclass_idx)
 
         # Internet URL for the tar-file with the Inception model.
         # Note that this might change in the future and will need to be updated.
@@ -27,10 +27,25 @@ class Cifar100(datasets.Dataset.Dataset):
         self.data_dir = "./data/cifar100/"
 
         self.height, self.width, self.depth = 32, 32, 3
-        self.n_classes = len(self.subsets_idxes)
+        self.n_classes = 5
+        self.n_super_classes = 1
         self.img_size_flat = self.height * self.width * self.depth
 
-        super(Cifar100, self).__init__(normalize=normalize)
+
+        ########################################################################
+        # Various constants used to allocate arrays of the correct size.
+
+        # Number of files for the training-set.
+        self._num_files_train = 1
+
+        # Number of images for each batch-file in the training-set.
+        self._images_per_file = 2500
+
+        # Total number of images in the training-set.
+        # This is used to pre-allocate arrays for efficiency.
+        self._num_images_train = self._num_files_train * self._images_per_file
+
+        super(Cifar100_Subset, self).__init__(normalize=normalize)
 
     def _load_batch(self, fpath, label_key='labels'):
         """Internal utility for parsing CIFAR data.
@@ -73,14 +88,14 @@ class Cifar100(datasets.Dataset.Dataset):
         path = os.path.join(self.data_dir, dirname)
         fpath = os.path.join(path, 'train')
         x_train, y_train_fine = self._load_batch(fpath, 'fine_labels')
-        data_size = len(y_train_fine)
+        _, y_train_coarse = self._load_batch(fpath, 'coarse_labels')
 
         if K.image_data_format() == 'channels_last':
             x_train = x_train.transpose(0, 2, 3, 1)
-            
-        relevant_idxes = [i for i in range(data_size) if y_train_fine[i] in self.subsets_idxes]
-        x_train = x_train[relevant_idxes, :, :, :]
-        y_train = np.asarray(y_train_fine)[relevant_idxes]
+
+        curr_superclass_idxes = [i for i in range(len(y_train_fine)) if y_train_coarse[i] == self.superclass_idx]
+        x_train = x_train[curr_superclass_idxes]
+        y_train = np.asarray(y_train_fine)[curr_superclass_idxes]
         y_train_values = sorted(list(set(y_train)))
         assert(len(y_train_values) == self.n_classes)
         map_dict = {val: i for i, val in enumerate(y_train_values)}
@@ -95,14 +110,14 @@ class Cifar100(datasets.Dataset.Dataset):
         path = os.path.join(self.data_dir, dirname)
         fpath = os.path.join(path, 'test')
         x_test, y_test_fine = self._load_batch(fpath, 'fine_labels')
-        data_size = len(y_test_fine)
+        _, y_test_coarse = self._load_batch(fpath, 'coarse_labels')
 
         if K.image_data_format() == 'channels_last':
             x_test = x_test.transpose(0, 2, 3, 1)
-            
-        relevant_idxes = [i for i in range(data_size) if y_test_fine[i] in self.subsets_idxes]
-        x_test = x_test[relevant_idxes, :, :, :]
-        y_test = np.asarray(y_test_fine)[relevant_idxes]
+
+        curr_superclass_idxes = [i for i in range(len(y_test_fine)) if y_test_coarse[i] == self.superclass_idx]
+        x_test = x_test[curr_superclass_idxes]
+        y_test = np.asarray(y_test_fine)[curr_superclass_idxes]
         y_test_values = sorted(list(set(y_test)))
         assert(len(y_test_values) == self.n_classes)
         map_dict = {val: i for i, val in enumerate(y_test_values)}
@@ -111,6 +126,14 @@ class Cifar100(datasets.Dataset.Dataset):
 
         y_test_labels = one_hot_encoded(y_test, num_classes=self.n_classes)
         return x_test, y_test, y_test_labels
+
+    def set_superclass_idx(self, new_idx):
+        self.superclass_idx = new_idx
+        self.name = 'cifar_100_superclass_' + str(new_idx)
+        smaller_data_set = None
+        if self.smaller_data_set:
+            smaller_data_set = self.data_size
+        super(Cifar100_Subset, self).update_data_set(smaller_data_set)
 
     def normalize_dataset(self):
         if not self.normalized:
