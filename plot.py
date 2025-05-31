@@ -1,13 +1,18 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.stats import ttest_rel
+
+#ADAM_MNIST/
+data_type = 'text'
+optimizer = 'sgd' # 'adam', 'sgd'
+scoring = 'transfer_learning_scores' # 'length_scores', 'combined_scores', 'infrequency_scores', 'transfer_learning_scores'
 
 #=======================================plot loss function training======================================================#
-data_type = 'text'
-df_summary_vanilla = pd.read_csv(f'results_vanilla\{data_type}\summary_batch_metrics.csv')
-df_summary_challenger = pd.read_csv(f'results_challenger\{data_type}\summary_batch_metrics.csv')
-df_summary_curriculum = pd.read_csv(f'results_curriculum\{data_type}\summary_batch_metrics.csv')
-df_summary_anti = pd.read_csv(f'results_anti\{data_type}\summary_batch_metrics.csv')
+df_summary_vanilla = pd.read_csv(f'results_vanilla\{data_type}\{optimizer}\{scoring}\summary_batch_metrics.csv')
+df_summary_challenger = pd.read_csv(f'results_challenger\{data_type}\{optimizer}\{scoring}\summary_batch_metrics.csv')
+df_summary_curriculum = pd.read_csv(f'results_curriculum\{data_type}\{optimizer}\{scoring}\summary_batch_metrics.csv')
+df_summary_anti = pd.read_csv(f'results_anti\{data_type}\{optimizer}\{scoring}\summary_batch_metrics.csv')
 
 # Create figure
 plt.figure(figsize=(12, 5))
@@ -52,21 +57,21 @@ plt.fill_between(
     color='red', alpha=0.1, label='_nolegend_'
 )
 
-# Formatting
-plt.title('Training Loss over Batches with Std Deviation')
-plt.xlabel('Batch')
-plt.ylabel('Loss')
+plt.xticks(fontsize=24)
+plt.yticks(fontsize=24)
+plt.xlabel('Batch', fontsize=24)
+plt.ylabel('Loss', fontsize=24)
 plt.grid(True)
-plt.legend()
+plt.legend(loc='upper right', fontsize=24)
 plt.tight_layout()
 plt.show()
 
 #=======================================plot validation accuracy======================================================#
 
-df_val_vanilla = pd.read_csv(f'results_vanilla\{data_type}\periodic_validation_summary.csv')
-df_val_challenger = pd.read_csv(f'results_challenger\{data_type}\periodic_validation_summary.csv')
-df_val_curriculum = pd.read_csv(f'results_curriculum\{data_type}\periodic_validation_summary.csv')
-df_val_anti = pd.read_csv(f'results_anti\{data_type}\periodic_validation_summary.csv')
+df_val_vanilla = pd.read_csv(f'results_vanilla\{data_type}\{optimizer}\{scoring}\periodic_validation_summary.csv')
+df_val_challenger = pd.read_csv(f'results_challenger\{data_type}\{optimizer}\{scoring}\periodic_validation_summary.csv')
+df_val_curriculum = pd.read_csv(f'results_curriculum\{data_type}\{optimizer}\{scoring}\periodic_validation_summary.csv')
+df_val_anti = pd.read_csv(f'results_anti\{data_type}\{optimizer}\{scoring}\periodic_validation_summary.csv')
 
 # Create figure
 plt.figure(figsize=(12, 5))
@@ -111,20 +116,20 @@ plt.fill_between(
     color='red', alpha=0.1, label='_nolegend_'
 )
 
-# Formatting
-plt.title('Validation Accuracy over Batches with Std Deviation')
-plt.xlabel('Batch')
-plt.ylabel('Accuracy')
+plt.xticks(fontsize=24)
+plt.yticks(fontsize=24)
+plt.xlabel('Batch', fontsize=24)
+plt.ylabel('Accuracy', fontsize=24)
 plt.grid(True)
-plt.legend()
+plt.legend(loc='lower right', fontsize=24)
 plt.tight_layout()
 plt.show()
 
 #=======================================Histogram test accuracy======================================================#
-df_test_vanilla = pd.read_csv(fr'results_vanilla\{data_type}\test_results_summary.csv')
-df_test_challenger = pd.read_csv(fr'results_challenger\{data_type}\test_results_summary.csv')
-df_test_curriculum = pd.read_csv(fr'results_curriculum\{data_type}\test_results_summary.csv')
-df_test_anti = pd.read_csv(fr'results_anti\{data_type}\test_results_summary.csv')
+df_test_vanilla = pd.read_csv(fr'results_vanilla\{data_type}\{optimizer}\{scoring}\test_results_summary.csv')
+df_test_challenger = pd.read_csv(fr'results_challenger\{data_type}\{optimizer}\{scoring}\test_results_summary.csv')
+df_test_curriculum = pd.read_csv(fr'results_curriculum\{data_type}\{optimizer}\{scoring}\test_results_summary.csv')
+df_test_anti = pd.read_csv(fr'results_anti\{data_type}\{optimizer}\{scoring}\test_results_summary.csv')
 
 # Get second-to-last test_accuracy value for all datasets
 vanilla_mean = df_test_vanilla['test_accuracy'].iloc[-2]
@@ -144,29 +149,57 @@ means = [vanilla_mean, challenger_mean, curriculum_mean, anti_mean]
 stds = [vanilla_std, challenger_std, curriculum_std, anti_std]
 colors = ['blue', 'green', 'orange', 'red']
 
-plt.figure(figsize=(10, 8))
-bars = plt.bar(labels, means, yerr=stds, color=colors, alpha=0.7, width=0.8, capsize=5, error_kw={'elinewidth':1.5})
 
-# Add mean values on top of bars
+
+plt.figure(figsize=(7, 7)) 
+
+ax = plt.gca()
+ax.set_facecolor('lightgrey') 
+ax.spines['top'].set_color('white')  
+ax.spines['right'].set_color('white')
+ax.spines['left'].set_color('white')
+ax.spines['bottom'].set_color('white')
+
+bars = plt.bar(labels, means, yerr=stds, color=colors, alpha=0.9, width=0.8, capsize=5, error_kw={'elinewidth':1.5})
+
 for bar, mean in zip(bars, means):
     height = bar.get_height()
-    plt.text(bar.get_x() + bar.get_width()/2.0, height + 0.005, f'{mean:.3f}', ha='center', va='bottom')
+    plt.text(bar.get_x() + bar.get_width()/2.0, height + 0.005, f'{mean:.4f}', ha='center', va='bottom', fontsize=22)
 
-plt.xticks(labels)
-plt.title('Test Accuracy with Standard Deviation')
-plt.ylabel('Accuracy')
-plt.ylim(0.8, 0.9)
-plt.grid(axis='y', linestyle='--', alpha=0.5)
+plt.xticks(labels, fontsize=22, rotation=35)
+plt.yticks(np.arange(0.65, 0.82, 0.05), fontsize=22)
+plt.ylabel('Accuracy', fontsize=22)
+plt.ylim(0.65, 0.82)
+plt.grid(axis='y', linestyle='--', alpha=0.5, color='white')
 plt.tight_layout()
 plt.show()
 
 
 
+#==================================Hypothese test=================================================#
+# Assuming the column is named 'test_accuracy' and first 10 rows are runs
+vanilla_accuracies = df_test_vanilla['test_accuracy'].iloc[:10].values
+curriculum_accuracies = df_test_curriculum['test_accuracy'].iloc[:10].values
+anti_accuracies = df_test_anti['test_accuracy'].iloc[:10].values
+challenger_accuracies = df_test_challenger['test_accuracy'].iloc[:10].values
+
+# Paired t-test: H0 = curriculum_mean <= vanilla_mean; H1 = curriculum_mean > vanilla_mean
+t_stat, p_two_sided = ttest_rel(curriculum_accuracies, vanilla_accuracies)
+
+# One-sided p-value for curriculum > vanilla
+p_one_sided = p_two_sided / 2 if t_stat > 0 else 1 - p_two_sided / 2
+
+print(f"t-statistic: {t_stat:.4f}")
+print(f"One-sided p-value (curriculum > vanilla): {p_one_sided:.4f}")
+
+alpha = 0.05
+if p_one_sided < alpha:
+    print("Reject H0: Curriculum model is significantly better than Vanilla")
+else:
+    print("Fail to reject H0: No significant difference")
 
 
 
 
 
 
-
-#histogram accuracy test
