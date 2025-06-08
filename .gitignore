@@ -1,3 +1,1 @@
-sound_cnn/data/cifar10/
-sound_cnn/data/cifar100/
-sound_cnn/data/*
+sound/data/*
