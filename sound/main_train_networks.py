@@ -1,0 +1,399 @@
+import numpy as np
+
+import os.path
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+import local_datasets.esc50
+import models.esc50_model
+import train_keras_model
+import transfer_learning
+import pickle
+import argparse
+import time
+import scipy
+import matplotlib.pyplot as plt
+import pandas as pd
+
+def exponent_decay_lr_generator(decay_rate, minimum_lr, batch_to_decay):
+    cur_lr = None
+    def exponent_decay_lr(initial_lr, batch, history):
+        nonlocal cur_lr
+        if batch == 0:
+            cur_lr = initial_lr
+        if (batch % batch_to_decay) == 0 and batch !=0:
+            new_lr = cur_lr / decay_rate
+            cur_lr = max(new_lr, minimum_lr)
+        return cur_lr
+    return exponent_decay_lr
+
+def exponent_data_function_generator(dataset, order, batches_to_increase,
+                                     increase_amount, starting_percent,
+                                     batch_size=100):
+
+    size_data = dataset.x_train.shape[0]
+    
+    cur_percent = 1
+    cur_data_x = dataset.x_train
+    cur_data_y = dataset.y_test_labels
+    
+    
+    def data_function(x, y, batch, history, model):
+        nonlocal cur_percent, cur_data_x, cur_data_y
+        
+        if batch % batches_to_increase == 0:
+            if batch == 0:
+                percent = starting_percent
+            else:
+                percent = min(cur_percent*increase_amount, 1)
+            if percent != cur_percent:
+                cur_percent = percent
+                data_limit = int(np.ceil(size_data * percent))
+                new_data = order[:data_limit]
+                cur_data_x = dataset.x_train[new_data, :, :, :]
+                cur_data_y = dataset.y_train_labels[new_data, :]               
+        return cur_data_x, cur_data_y
+
+    return data_function
+
+
+def custom_exponent_data_function_generator(dataset, order,
+                                            batches_to_increase,
+                                            increase_amount,
+                                            starting_percent,
+                                            batch_size=100):
+    """
+    Curriculum schedule:
+      • each cycle is `batches_to_increase` long
+      • first ¼ of the cycle  -> train on NEW block only
+      • last ¾ of the cycle   -> train on OLD U NEW
+    """
+
+    size_data = dataset.x_train.shape[0]
+
+    # --- curriculum state ---------------------------------------------------
+    old_idx      = np.empty(0, dtype=np.int64)          # data already assimilated
+    lower_pct    = 0.0
+    upper_pct    = starting_percent                     # first block to warm up
+
+    # indices of the block currently being warmed up
+    new_idx      = order[: int(np.ceil(size_data * upper_pct))]
+
+    # the tensors actually handed to the trainer (cached between calls)
+    cur_x        = dataset.x_train[new_idx]
+    cur_y        = dataset.y_train_labels[new_idx]
+
+    quarter_len  = max(1, batches_to_increase // 4)     # avoid zero when k<4
+
+    def data_function(x, y, batch, history, model):
+        nonlocal old_idx, new_idx, lower_pct, upper_pct, cur_x, cur_y
+
+        pos_in_cycle = batch % batches_to_increase
+
+        # ─────────────── start of a *new* cycle ───────────────
+        if pos_in_cycle == 0 and batch != 0:
+            # 1. permanently add the block we have just warmed up
+            old_idx = np.concatenate([old_idx, new_idx])
+
+            # 2. grow the curriculum window
+            lower_pct  = upper_pct
+            upper_pct  = min(upper_pct * increase_amount, 1.0)
+
+            # 3. slice indices for the fresh block
+            new_idx = order[
+                int(size_data * lower_pct) : int(np.ceil(size_data * upper_pct))
+            ]
+
+            # 4. for the first quarter we train on *new* only
+            cur_x = dataset.x_train[new_idx]
+            cur_y = dataset.y_train_labels[new_idx]
+
+        # ─────────────── switch from NEW → (OLD∪NEW) ───────────────
+        elif pos_in_cycle == quarter_len:
+            union_idx = np.concatenate([old_idx, new_idx])
+            cur_x     = dataset.x_train[union_idx]
+            cur_y     = dataset.y_train_labels[union_idx]
+
+        return cur_x, cur_y
+
+    return data_function
+
+def order_by_loss(dataset, model):
+    size_train = len(dataset.y_train)
+    scores = model.predict(dataset.x_train)
+    hardness_score = scores[list(range(size_train)), dataset.y_train]
+    res = np.asarray(sorted(range(len(hardness_score)), key=lambda k: hardness_score[k], reverse=True))
+    return res
+
+def balance_order(order, dataset):
+    num_classes = dataset.n_classes
+    size_each_class = dataset.x_train.shape[0] // num_classes
+    class_orders = []
+    for cls in range(num_classes):
+        class_orders.append([i for i in range(len(order)) if dataset.y_train[order[i]] == cls])
+    new_order = []
+    ## take each group containing the next easiest image for each class,
+    ## and putting them according to diffuclt-level in the new order
+    for group_idx in range(size_each_class):
+        group = sorted([class_orders[cls][group_idx] for cls in range(num_classes)])
+        for idx in group:
+            new_order.append(order[idx])
+    return new_order
+
+
+def data_function_from_input(curriculum, batch_size,
+                             dataset, order, batch_increase,
+                             increase_amount, starting_percent):
+    if curriculum == "random":
+        np.random.shuffle(order)
+        
+    if curriculum == "None" or curriculum == "vanilla":
+        data_function = train_keras_model.basic_data_function
+
+    elif curriculum in ["curriculum", "vanilla", "anti", "random"]:
+        data_function = exponent_data_function_generator(dataset, order, batch_increase, increase_amount,
+                                                         starting_percent, batch_size=batch_size)
+
+    elif curriculum == "curriculum_mixed":
+        data_function = custom_exponent_data_function_generator(dataset, order, batch_increase, increase_amount,
+                                                         starting_percent, batch_size=batch_size)
+    
+    else:
+        print("unsupprted condition (not vanilla/curriculum/random/anti/curriculum_custom/curriculum_mixed)")
+        print("got the value:", curriculum)
+        raise ValueError
+    return data_function
+
+
+def load_dataset(dataset_name):        
+    if dataset_name == "esc50":
+        dataset = local_datasets.esc50.ESC50(normalize=False)
+    
+    else:
+        print("do not support dataset: %s" % dataset_name)
+        raise ValueError
+
+    return dataset
+
+
+def load_model(model_name, dataset_name):
+    if dataset_name.startswith('esc50'):
+        return models.esc50_model.ESC50_Model()
+    else:
+        return models.cifar100_model.Cifar100_Model()
+
+
+def load_order(order_name, dataset):
+    classic_networks = ["clap"]
+    if order_name in classic_networks:
+        network_name = order_name
+        if not transfer_learning.svm_scores_exists(dataset,
+                                                   network_name=network_name):
+            if order_name == "clap":
+                # Use CLAP embeddings for ESC50
+                (transfer_values_train, transfer_values_test) = transfer_learning.get_transfer_values_clap(dataset)
+            else:
+                print("transfer learning for %s is not supported" % order_name)
+                raise ValueError
+        else:
+            (transfer_values_train, transfer_values_test) = (None, None)
+
+        train_scores, test_scores = transfer_learning.get_svm_scores(transfer_values_train, dataset.y_train,
+                                                                     transfer_values_test, dataset.y_test, dataset,
+                                                                     network_name=network_name)
+        order = transfer_learning.rank_data_according_to_score(train_scores, dataset.y_train)
+        
+    else:
+        print("do not support order: %s" % order_name)
+        raise ValueError
+    
+    return order
+
+
+def combine_histories(history_list):
+    
+    num_repeats = len(history_list)
+    
+    combined_history = history_list[0].copy()
+    for key in ["loss", "acc", "val_loss", "val_acc"]:
+        size_key = len(history_list[0][key])
+        results = np.zeros((num_repeats, size_key))
+        for i in range(num_repeats):
+            results[i, :] = history_list[i][key]
+        combined_history[key] = np.mean(results, axis=0)
+        if key == "acc":
+            if num_repeats >1:
+                combined_history["std_acc"] = scipy.stats.sem(results, axis=0)
+            else:
+                combined_history["std_acc"] = None
+        if key == "val_acc":
+            if num_repeats >1:
+                combined_history["std_val_acc"] = scipy.stats.sem(results, axis=0)
+            else:
+                combined_history["std_val_acc"] = None
+    
+    return combined_history
+
+
+
+def graph_from_history(history, plot_train=False, plot_test=True, output_path=None):
+    
+    fig, axs = plt.subplots(figsize=(10,5))
+    
+    if plot_train:
+        x = np.array(history['batch_num'])
+        y = history['acc'][x]
+        error = history['std_acc'][x]
+        
+        if error is not None:
+            axs.errorbar(x, y, error, marker='^', label="train")
+        else:
+            plt.plot(x, y, label="train")
+    
+    if plot_test:
+        x = np.array(history['batch_num'])
+        y = history['val_acc']
+        error = history['std_val_acc']
+        
+        if error is not None:
+            axs.errorbar(x, y, error, marker='^', label="test")
+        else:
+            plt.plot(x, y, label="test")
+    
+    axs.set_xlabel("batch number")
+    axs.set_ylabel("accuracy")
+    plt.legend()
+#    axs.legend(loc="best")
+
+    if output_path:
+        plt.savefig(output_path)
+
+def run_expriment(args):
+    dataset = load_dataset(args.dataset)
+    model_lib = load_model(args.model, args.dataset)
+
+    size_train = dataset.x_train.shape[0]
+    num_batches = (args.num_epochs * size_train) // args.batch_size
+
+    lr_scheduler = exponent_decay_lr_generator(args.lr_decay_rate,
+                                               args.minimal_lr,
+                                               args.lr_batch_size)
+
+    order = load_order(args.order, dataset)
+    order = balance_order(order, dataset)    
+    
+    if args.curriculum == "anti":
+        order = np.flip(order, 0)
+    elif args.curriculum == "random":
+        np.random.shuffle(order)
+        
+    elif (args.curriculum not in ["None", "curriculum", "vanilla", "curriculum_custom", "curriculum_mixed"]):
+        print("--curriculum value of %s is not supported!" % args.curriculum)
+        raise ValueError
+        
+    dataset.normalize_dataset()
+    if args.output_path:
+        output_path = args.output_path
+    else:
+        output_path = None
+    
+    ## start expriment
+    start_time_all = time.time()
+    histories =[]
+    for repeat in range(args.repeats):
+        
+        data_function = data_function_from_input(args.curriculum,
+                                                 args.batch_size,
+                                                 dataset,
+                                                 order,
+                                                 args.batch_increase,
+                                                 args.increase_amount,
+                                                 args.starting_percent)
+        
+        
+        print("starting repeat number: " + str(repeat + 1))
+        model = model_lib.build_classifier_model(dataset)
+        
+        train_keras_model.compile_model(model,
+                                        initial_lr=args.learning_rate,
+                                        loss='categorical_crossentropy',
+                                        optimizer="sgd")
+        
+        if args.curriculum == "curriculum_custom":
+            batch_strategy = "curriculum_easy_hard"
+        else:
+            batch_strategy = "random"
+        
+        history = train_keras_model.train_model_batches(model,
+                                                        dataset,
+                                                        num_batches,
+                                                        batch_strategy=batch_strategy,
+                                                        verbose=args.verbose,
+                                                        batch_size=args.batch_size,
+                                                        initial_lr=args.learning_rate,
+                                                        lr_scheduler=lr_scheduler,
+                                                        data_function=data_function)
+
+        histories.append(history)
+        if output_path:
+            model.save(output_path + f"_repeat{repeat+1}_model.h5")
+
+        
+        
+    print("time all: --- %s seconds ---" % (time.time() - start_time_all))
+    
+    
+    combined_history = combine_histories(histories)
+        
+    print("training acc:", combined_history['acc'][-1])
+    print("test acc:", combined_history['val_acc'][-1])
+    
+    plot_path = output_path + "_plot.png" if output_path else None
+    graph_from_history(combined_history, plot_train=False, plot_test=True, output_path=plot_path)
+
+    if output_path:
+        df_val = pd.DataFrame({
+            "batch_num": combined_history["batch_num"],
+            "val_acc": combined_history["val_acc"],
+            "val_loss": combined_history["val_loss"],
+            "std_val_acc": combined_history.get("std_val_acc", [None] * len(combined_history["val_acc"]))
+        })
+
+        df_train = pd.DataFrame({
+            "train_batch": list(range(len(combined_history["acc"]))),
+            "acc": combined_history["acc"],
+            "loss": combined_history["loss"],
+            "std_acc": combined_history.get("std_acc", [None] * len(combined_history["acc"]))
+        })
+        df_val.to_csv(output_path + "_val_history.csv", index=False)
+        df_train.to_csv(output_path + "_train_history.csv", index=False)
+
+    if "pacing" in combined_history and output_path:
+        pd.DataFrame(combined_history["pacing"]).to_csv(output_path + "_pacing2.csv", index=False)
+    
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='')
+
+    parser.add_argument("--dataset", default="cifar100_subset_16", help="dataset to use (cifar10, cifar100, cifar100_subset_N, esc50)")
+    parser.add_argument("--model", default="cifar", help="model to use (cifar, esc50)")
+    parser.add_argument("--output_path", default=r'', help="where to save the model")
+    parser.add_argument("--verbose", default=True, type=bool, help="print more stuff")
+    
+    parser.add_argument("--curriculum", "-cl", default="curriculum", help="which test case to use. supports: vanilla, curriculum, anti, random, curriculum_custom")
+    parser.add_argument("--batch_size", default=100, type=int, help="determine batch size")
+    parser.add_argument("--num_epochs", default=140, type=int, help="number of epochs to train on")
+
+    # ...existing code...
+    
+    # curriculum params
+    parser.add_argument("--batch_increase", default=100, type=int, help="interval of batches to increase the amount of data we sample from")
+    parser.add_argument("--increase_amount", default=1.9, type=float, help="factor by which we increase the amount of data we sample from")
+    parser.add_argument("--starting_percent", default=100/2500, type=float, help="percent of data to sample from in the inital batch")
+    parser.add_argument("--order", default="inception", help="determine the order of the examples, supports transfer learning. options: inception, vgg16, vgg19, xception, resnet, clap (for ESC50)")
+    
+    parser.add_argument("--repeats", default=1, type=int, help="number of times to repeat the experiment")
+    
+    args = parser.parse_args()
+    
+    run_expriment(args)
