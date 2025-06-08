@@ -1,21 +1,10 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Created on Wed Jan 31 18:53:31 2018
-
-@author: guy.hacohen
-"""
 import numpy as np
 
 import os.path
 import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-import local_datasets.cifar100_subset
-import local_datasets.cifar10
-import local_datasets.cifar100
 import local_datasets.esc50
-import models.cifar100_model
 import models.esc50_model
 import train_keras_model
 import transfer_learning
