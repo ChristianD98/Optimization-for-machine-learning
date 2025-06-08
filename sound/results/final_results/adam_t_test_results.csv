@@ -1,0 +1,7 @@
+method1,method2,t_statistic,p_value,significant,acc_diff
+anti,curriculum,1.872129893572025,0.1752485541892035,False,0.005277785989973305
+anti,curriculum_mixed,,,False,
+anti,vanilla,2.900216101736966,0.07152387373492669,False,0.008333351877000572
+curriculum,curriculum_mixed,,,False,
+curriculum,vanilla,2.0788189232365877,0.10758458795409834,False,0.0030555658870272673
+curriculum_mixed,vanilla,,,False,
