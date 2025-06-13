@@ -82,7 +82,7 @@ python sound/main_reproduce_paper.py
 
 This script will automatically run all combinations of curriculum strategies and optimizers.
 
-## 📈 Results
+## 📈 Results & plots
 
 Results are saved in modality-specific folders with the naming convention `results_{mode}/{data_type}/`:
 
@@ -90,6 +90,7 @@ Results are saved in modality-specific folders with the naming convention `resul
 - `test_results_summary.csv` - Final test set performance
 - `periodic_validation_summary.csv` - Validation performance during training
 
+- Plots shown in the report for each task are computed from the file plot.py in each folder
 
 ## 🧪 Experiment Configuration
 
